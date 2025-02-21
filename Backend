@@ -1,0 +1,121 @@
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { Pool } from 'pg';
+import { OpenAI } from 'openai';
+import { dalle } from 'openai';
+
+dotenv.config();
+
+const app = express();
+const port = process.env.PORT || 5000;
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// PostgreSQL Database Connection
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+
+// OpenAI API Setup
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// Route: Save Session Notes
+app.post('/notes', async (req, res) => {
+  try {
+    const { campaign_id, note_content } = req.body;
+    const result = await pool.query(
+      'INSERT INTO notes (campaign_id, note_content) VALUES ($1, $2) RETURNING *',
+      [campaign_id, note_content]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Route: Retrieve Session Notes
+app.get('/notes/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query('SELECT * FROM notes WHERE id = $1', [id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Route: Generate Character Sheet from Notes
+app.post('/generate/character', async (req, res) => {
+  try {
+    const { note_content } = req.body;
+    const response = await openai.completions.create({
+      model: 'gpt-4',
+      prompt: `Generate a DnD 5e character sheet based on these notes: ${note_content}`,
+      max_tokens: 300
+    });
+    res.json({ character_sheet: response.choices[0].text.trim() });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'AI generation failed' });
+  }
+});
+
+// Route: Generate Story Suggestions from Notes
+app.post('/generate/story', async (req, res) => {
+  try {
+    const { note_content } = req.body;
+    const response = await openai.completions.create({
+      model: 'gpt-4',
+      prompt: `Suggest a compelling DnD story arc based on these session notes: ${note_content}`,
+      max_tokens: 300
+    });
+    res.json({ story_suggestions: response.choices[0].text.trim() });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'AI generation failed' });
+  }
+});
+
+// Route: Generate AI Art Token
+app.post('/generate/token', async (req, res) => {
+  try {
+    const { description } = req.body;
+    const response = await dalle.text2im({
+      prompt: `A detailed fantasy character token: ${description}, top-down view, circular crop, high detail`,
+      size: '1024x1024'
+    });
+    res.json({ token_url: response.data[0].url });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'AI token generation failed' });
+  }
+});
+
+// Route: Generate AI Art Location Reference Image
+app.post('/generate/location', async (req, res) => {
+  try {
+    const { description } = req.body;
+    const response = await dalle.text2im({
+      prompt: `A stunning and detailed fantasy location: ${description}, immersive lighting, cinematic atmosphere, high resolution`,
+      size: '1024x1024'
+    });
+    res.json({ location_url: response.data[0].url });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'AI location image generation failed' });
+  }
+});
+
+// Start Server
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
